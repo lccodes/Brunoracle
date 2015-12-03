@@ -1,9 +1,27 @@
 package edu.brown.lcamery.contracts;
 
-public abstract class Contract {
-	protected abstract boolean evaluate();
-	protected abstract void onTrue();
-	protected abstract void onFalse();
-	protected abstract boolean firstResponse(String question);
-	protected abstract boolean secondResponse(String question);
+import java.util.Map;
+
+import org.bitcoinj.core.Address;
+import org.bitcoinj.core.Coin;
+import org.bitcoinj.core.ECKey;
+
+public final class Contract {
+	public static ECKey key1, key2;
+	
+	public static boolean evaluate() {
+		return false;
+	}
+	public static Map<Address, Coin> onTrue() {
+		return null;
+	}
+	public static Map<Address, Coin> onFalse() {
+		return null;
+	}
+	public static boolean firstResponse(String question) {
+		return false;
+	}
+	public static boolean secondResponse(String question) {
+		return false;
+	}
 }
