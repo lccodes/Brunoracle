@@ -8,6 +8,7 @@ import org.bitcoinj.core.ECKey;
 
 public final class Contract {
 	public static ECKey key1, key2;
+	public static Coin dep1, dep2;
 	
 	public static boolean evaluate() {
 		return false;

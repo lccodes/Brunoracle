@@ -1,16 +1,14 @@
 package edu.brown.lcamery.server;
 
 import java.io.File;
-import java.math.BigInteger;
 import java.util.List;
 import java.util.Map;
 
 import org.bitcoinj.core.AbstractWalletEventListener;
 import org.bitcoinj.core.Address;
-import org.bitcoinj.core.AddressFormatException;
-import org.bitcoinj.core.Base58;
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.ECKey;
+import org.bitcoinj.core.InsufficientMoneyException;
 import org.bitcoinj.core.NetworkParameters;
 import org.bitcoinj.core.Transaction;
 import org.bitcoinj.core.TransactionConfidence;
@@ -22,16 +20,18 @@ import org.bitcoinj.params.RegTestParams;
 import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.utils.BriefLogFormatter;
-import org.spongycastle.math.ec.ECPoint;
+import org.bitcoinj.utils.Threading;
 
 import edu.brown.lcamery.server.support.DispatchException;
 import edu.brown.lcamery.server.support.FieldTypes;
 import edu.brown.lcamery.server.support.Network;
 import edu.brown.lcamery.server.support.Tuple;
+import edu.brown.lcamery.support.VerificationException;
 
 public class Server {
 	public final WalletAppKit btckit;
 	public static String LOG = "./logs";
+	public static final int UPDATE_ATTEMPTS = 5;
 	
 	public Server(Network network) {
 		BriefLogFormatter.init();
@@ -72,20 +72,21 @@ public class Server {
 	 * Ensures that there are sufficient accessible funds to proceed with transaction
 	 * @param deposits: map of key to amount
 	 */
-	public boolean validateDeposits(Map<String, Integer> deposits) {
-		Coin balance = Coin.valueOf(0);
-		for (Map.Entry<String, Integer> deposit : deposits.entrySet()) {
-			this.btckit.wallet().importKey(ECKey.fromPrivate(new BigInteger(deposit.getKey())));
-			Coin bal = this.btckit.wallet().getBalance(BalanceType.AVAILABLE_SPENDABLE);
-			if (bal.getValue() - balance.getValue() > deposit.getValue()) {
-				balance = bal;
-			} else {
-				System.out.println("[failure] key " + deposit.getValue() + " has insufficient funds");
-				return false;
+	public void validateDeposits(Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification, FieldTypes which) throws VerificationException {
+		final Coin balance = this.btckit.wallet().getBalance(BalanceType.ESTIMATED);
+		this.btckit.wallet().importKey(verification.two.get(FieldTypes.getOther(which)));
+		int tries = Server.UPDATE_ATTEMPTS;
+		boolean enoughOne = false;
+		while (tries-- > 0) {
+			Coin newBalance = this.btckit.wallet().getBalance(BalanceType.ESTIMATED);
+			if (newBalance.subtract(balance).isGreaterThan(verification.one.get(which))) {
+				enoughOne = true;
+				break;
 			}
 		}
-		
-		return true;
+		if (!enoughOne) {
+			throw new VerificationException("[server] insufficient deposit by " + which);
+		}
 	}
 	
 	/*
@@ -96,56 +97,43 @@ public class Server {
 	/*
 	 * Launches the server
 	 */
-	public void launch() {
+	public void serveContracts(String location) {
 		try {
-			Dispatch d = new Dispatch(".\\contracts");
+			Dispatch d = new Dispatch(location);
 			while(d.hasNext()) {
-				Tuple<Map<FieldTypes, ECKey>, Map<Address, Coin>> outputs = d.executeNext();
-				//TODO:
-				//1. Ensure that keys have sufficient balance
-				//2. Evaluate contract
-				//3. SendResults
-				//4. Decide what to do on listener
+				Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification = d.getNextKeys();
+				for (FieldTypes deps : FieldTypes.getDeposits()) {
+					validateDeposits(verification, deps);
+				}
+				
+				Map<Address, Coin> outputs = d.executeNext();
+				
+				try {
+					for (Map.Entry<Address, Coin> out : outputs.entrySet()) {
+						final Wallet.SendResult result = 
+								btckit.wallet().sendCoins(btckit.peerGroup(), out.getKey(), out.getValue());
+						result.broadcastComplete.addListener(new Runnable() {
+						    @Override
+						    public void run() {
+						         System.out.println("[server] contract complete: " + result.tx.getHashAsString());
+						    }
+						}, Threading.USER_THREAD);
+					}
+				} catch (InsufficientMoneyException e1) {
+					//This should never occur
+					e1.printStackTrace();
+					break;
+				}
 			}
 			System.out.println("done");
-		} catch (DispatchException e) {
+		} catch (DispatchException | VerificationException e) {
 			System.out.println(e.getMessage());
 		}
 	}
 	
 	public static void main(String[] args) {
 		Server s = new Server(Network.TEST);
-		System.out.println(s.btckit.wallet().currentReceiveAddress());
-		try {
-			Thread.sleep(1000);
-		} catch (InterruptedException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}
-		
-		/*try {
-			final Wallet.SendResult result = s.btckit.wallet().sendCoins(s.btckit.peerGroup(), s.btckit.wallet().freshReceiveAddress(), Coin.valueOf(1000));
-			result.broadcastComplete.addListener(new Runnable() {
-			    @Override
-			    public void run() {
-			         // The wallet has changed now, it'll get auto saved shortly or when the app shuts down.
-			         System.out.println("Sent coins onwards! Transaction hash is " + result.tx.getHashAsString());
-			    }
-			}, Threading.USER_THREAD);
-		} catch (InsufficientMoneyException e1) {
-			// TODO Auto-generated catch block
-			e1.printStackTrace();
-		}*/
-		
-		//while(true){
-			try {
-				Thread.sleep(10000);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
-			System.out.println("estimate:"+s.btckit.wallet().getBalance(BalanceType.ESTIMATED));
-			System.out.println("spendable:"+s.btckit.wallet().getBalance(BalanceType.AVAILABLE_SPENDABLE));
-		//}
+		s.serveContracts(".//contracts");
 	}
 	
     // The Wallet event listener its implementations get called on wallet changes.
@@ -185,9 +173,6 @@ public class Server {
 
         @Override
         public void onScriptsChanged(Wallet wallet, List<Script> scripts, boolean isAddingScripts) {
-        	for (Script s : scripts) {
-        		System.out.println(s);
-        	}
             System.out.println("new script added");
         }
     }

@@ -95,7 +95,7 @@ public class Dispatch {
 	 * Allows command and control to execute the next contract
 	 */
 	@SuppressWarnings("unchecked")
-	public Tuple<Map<FieldTypes,ECKey>, Map<Address, Coin>> executeNext() throws DispatchException {
+	public Map<Address, Coin> executeNext() throws DispatchException {
 		if (!this.hasNext()) {
 			throw new DispatchException("[failure] dispatch invoked without contracts");
 		}
@@ -103,7 +103,6 @@ public class Dispatch {
 		Class<?> contract = this.theContracts.get(0);
 		this.theContracts.remove(0);
 		Map<ContractMethods, Method> safeMethods = verifyAndParse(contract.getMethods());
-		Map<FieldTypes, ECKey> keys = verifyAndParseFields(contract.getFields());
 		
 		try {
 			ContractManager sm = (ContractManager) System.getSecurityManager();
@@ -116,7 +115,7 @@ public class Dispatch {
 			}
 			sm.toggle(this.pass);
 			
-			return new Tuple<Map<FieldTypes,ECKey>, Map<Address, Coin>>(keys,btc);
+			return btc;
 		} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
 			new DispatchException("[failure] on evaluate: " + e.getMessage());
 		} catch (SecurityException e) {
@@ -127,13 +126,26 @@ public class Dispatch {
 	}
 	
 	/*
+	 * Gets the keys for the next verification
+	 */
+	public Tuple<Map<FieldTypes,Coin>, Map<FieldTypes, ECKey>> getNextKeys() throws DispatchException {
+		if (!this.hasNext()) {
+			throw new DispatchException("[failure] dispatch invoked without contracts");
+		}
+		
+		return verifyAndParseFields(this.theContracts.get(0).getFields());
+	}
+	
+	/*
 	 * Verifies the correct fields
 	 * @param Field[] : all the variables
 	 * @return <FieldType,ECKey>
 	 */
-	private static Map<FieldTypes, ECKey> verifyAndParseFields(Field[] fields) throws DispatchException {
+	private static Tuple<Map<FieldTypes,Coin>, Map<FieldTypes, ECKey>> verifyAndParseFields(Field[] fields) throws DispatchException {
 		Map<FieldTypes, ECKey> finalfields = new HashMap<FieldTypes, ECKey>();
-		Boolean[] bools = new Boolean[2];
+		Map<FieldTypes, Coin> coins = new HashMap<FieldTypes, Coin>();
+		
+		Boolean[] bools = new Boolean[4];
 		for (int i = 0; i < bools.length; i++) {
 			bools[i] = false;
 		}
@@ -153,6 +165,17 @@ public class Dispatch {
 						new DispatchException("[failure] extraneous field " + f.getName());
 					}
 						
+				} else if (o instanceof Coin) {
+					Coin c = (Coin) o;
+					if (f.getName().equals("dep1")) {
+						bools[3] = true;
+						coins.put(FieldTypes.DEP1, c);
+					} else if (f.getName().equals("dep2")) {
+						bools[4] = true;
+						coins.put(FieldTypes.DEP2, c);
+					} else {
+						new DispatchException("[failure] extraneous field " + f.getName());
+					}
 				}
 			} catch (IllegalArgumentException | IllegalAccessException e) {
 				new DispatchException("[failure] coult not parse field " + f.getName());
@@ -165,7 +188,7 @@ public class Dispatch {
 			}
 		}
 		
-		return finalfields;
+		return new Tuple<Map<FieldTypes,Coin>, Map<FieldTypes, ECKey>>(coins,finalfields);
 	}
 	
 	/*
@@ -195,6 +218,13 @@ public class Dispatch {
 		safeMethods.put(ContractMethods.ONFALSE, onTrue);
 		
 		return safeMethods;
+	}
+	
+	/*
+	 * Kills the contract if it can't be verified
+	 */
+	public void skipNext() {
+		this.theContracts.remove(0);
 	}
 	
 	/*
