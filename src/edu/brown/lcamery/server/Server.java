@@ -1,6 +1,7 @@
 package edu.brown.lcamery.server;
 
 import java.io.File;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +22,8 @@ import org.bitcoinj.params.TestNet3Params;
 import org.bitcoinj.script.Script;
 import org.bitcoinj.utils.BriefLogFormatter;
 import org.bitcoinj.utils.Threading;
+
+import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.brown.lcamery.server.support.DispatchException;
 import edu.brown.lcamery.server.support.FieldTypes;
@@ -98,37 +101,51 @@ public class Server {
 	 * Launches the server
 	 */
 	public void serveContracts(String location) {
+		List<ListenableFuture<Transaction>> contractOutputs = new LinkedList<ListenableFuture<Transaction>>();
+		Dispatch d;
 		try {
-			Dispatch d = new Dispatch(location);
-			while(d.hasNext()) {
+			d = new Dispatch(location);
+		} catch (DispatchException e2) {
+			System.out.println("[server] failed to load " + location);
+			return;
+		}
+		
+		while(d.hasNext()) {
+			try {
 				Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification = d.getNextKeys();
-				for (FieldTypes deps : FieldTypes.getDeposits()) {
-					validateDeposits(verification, deps);
+				try {
+					for (FieldTypes deps : FieldTypes.getDeposits()) {
+						validateDeposits(verification, deps);
+					}
+				} catch (VerificationException e) {
+					System.out.print("[server] contract failed verification");
+					continue;
 				}
 				
 				Map<Address, Coin> outputs = d.executeNext();
-				
-				try {
-					for (Map.Entry<Address, Coin> out : outputs.entrySet()) {
-						final Wallet.SendResult result = 
-								btckit.wallet().sendCoins(btckit.peerGroup(), out.getKey(), out.getValue());
-						result.broadcastComplete.addListener(new Runnable() {
-						    @Override
-						    public void run() {
-						         System.out.println("[server] contract complete: " + result.tx.getHashAsString());
-						    }
-						}, Threading.USER_THREAD);
-					}
-				} catch (InsufficientMoneyException e1) {
-					//This should never occur
-					e1.printStackTrace();
-					break;
+
+				for (Map.Entry<Address, Coin> out : outputs.entrySet()) {
+					final Wallet.SendResult result = 
+							btckit.wallet().sendCoins(btckit.peerGroup(), out.getKey(), out.getValue());
+					result.broadcastComplete.addListener(new Runnable() {
+					    @Override
+					    public void run() {
+					         System.out.println("[server] contract complete: " + result.tx.getHashAsString());
+					    }
+					}, Threading.USER_THREAD);
+					
+					contractOutputs.add(result.broadcastComplete);
 				}
+			} catch (InsufficientMoneyException e1) {
+				//This should never occur
+				e1.printStackTrace();
+				break;
+			} catch (DispatchException e1) {
+				//This may occur
+				System.out.println("[server] contract failed");
 			}
-			System.out.println("done");
-		} catch (DispatchException | VerificationException e) {
-			System.out.println(e.getMessage());
 		}
+		System.out.println("done");
 	}
 	
 	public static void main(String[] args) {

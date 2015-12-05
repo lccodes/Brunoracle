@@ -10,6 +10,10 @@ public final class Contract {
 	public static ECKey key1, key2;
 	public static Coin dep1, dep2;
 	
+	public static ContractType getType() {
+		return null;
+	}
+	
 	public static boolean evaluate() {
 		return false;
 	}

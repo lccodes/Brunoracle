@@ -18,6 +18,9 @@ import org.bitcoinj.core.Address;
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.ECKey;
 
+import edu.brown.lcamery.contracts.ContractType;
+import edu.brown.lcamery.contracts.ScriptedContract;
+import edu.brown.lcamery.contracts.StandardContract;
 import edu.brown.lcamery.server.security.ContractManager;
 import edu.brown.lcamery.server.support.ContractMethods;
 import edu.brown.lcamery.server.support.DispatchException;
@@ -28,6 +31,7 @@ public class Dispatch {
 	private final String LOCATION;
 	private ArrayList<Class<?>> theContracts;
 	private final int pass;
+	public final static String EVAL_TYPE_STANDARD = "java.util.Map<org.bitcoinj.core.Address, org.bitcoinj.core.Coin>";
 	
 	/*
 	 * Inits dispatch object 
@@ -44,6 +48,23 @@ public class Dispatch {
 	}
 	
 	/*
+	 * Returns the type of the next contract so that the server can execute correctly
+	 */
+	public ContractType getNextType() throws DispatchException {
+		if (!this.hasNext()) {
+			throw new DispatchException("[failure] dispatch invoked without contracts");
+		}
+		
+		if (this.theContracts.get(0).getSuperclass().equals(StandardContract.class)) {
+			return ContractType.STANDARD;
+		} else if (this.theContracts.get(0).getSuperclass().equals(ScriptedContract.class)) {
+			return ContractType.SCRIPTED;
+		}
+		
+		throw new DispatchException("[dispatch] contract of illegal class");
+	}
+	
+	/*
 	 * Loads the contracts as Class files awaiting method invocation
 	 */
 	private void loadContracts() throws DispatchException {
@@ -57,7 +78,9 @@ public class Dispatch {
 						Enumeration<JarEntry> e = jar .entries();
 						if (e.hasMoreElements()) {
 							JarEntry j = (JarEntry) e.nextElement();
-							while(!j.getName().contains("contract")) {
+							while(!j.getName().contains("contract") || j.getName().contains("type")
+									|| j.getName().contains("standard")
+									|| j.getName().contains("scripted")) {
 								j = (JarEntry) e.nextElement();
 							}
 							String name = j.getName();
@@ -206,13 +229,13 @@ public class Dispatch {
 		safeMethods.put(ContractMethods.EVALUATE, eval);
 		
 		Method onTrue = findMethod(methods, ContractMethods.ONTRUE.name);
-		if (onTrue == null || !onTrue.getGenericReturnType().getTypeName().equals("Map<Address,Coin>")) {
+		if (onTrue == null || !onTrue.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)) {
 			throw new DispatchException("[failure] onTrue method tampered");
 		}
 		safeMethods.put(ContractMethods.ONTRUE, onTrue);
 		
 		Method onFalse = findMethod(methods, ContractMethods.ONFALSE.name);
-		if (onFalse == null || !onFalse.getGenericReturnType().getTypeName().equals("Map<Address,Coin>")) {
+		if (onFalse == null || !onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)) {
 			throw new DispatchException("[failure] onFalse method tampered");
 		}
 		safeMethods.put(ContractMethods.ONFALSE, onTrue);
@@ -241,21 +264,6 @@ public class Dispatch {
 		}
 		
 		return null;
-	}
-	
-	/*
-	 * Test
-	 */
-	public static void main(String[] args) {
-		try {
-			Dispatch d = new Dispatch("C:\\Users\\lcamery\\Documents\\GitHub\\Brunoracle\\contracts");
-			while(d.hasNext()) {
-				d.executeNext();
-			}
-			System.out.println("done");
-		} catch (DispatchException e) {
-			System.out.println(e.getMessage());
-		}
 	}
 
 }
