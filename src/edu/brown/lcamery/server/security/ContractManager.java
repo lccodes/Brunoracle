@@ -1,6 +1,7 @@
 package edu.brown.lcamery.server.security;
 
 import java.io.FileDescriptor;
+import java.security.Permission;
 
 public class ContractManager extends SecurityManager {
 	private final int pass;
@@ -11,6 +12,14 @@ public class ContractManager extends SecurityManager {
 		this.on = true;
 	}
 
+	@Override
+	public void checkPermission(Permission p) {
+		if (!on) {
+			return;
+		}
+		throw new SecurityException("[security] contract attempted to check permission " + p.getName());
+	}
+	
 	@Override
 	public void checkAccept(String host, int port) {
 		if (!on) {

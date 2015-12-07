@@ -25,6 +25,7 @@ import org.bitcoinj.utils.Threading;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
+import edu.brown.lcamery.contracts.ContractType;
 import edu.brown.lcamery.server.support.DispatchException;
 import edu.brown.lcamery.server.support.FieldTypes;
 import edu.brown.lcamery.server.support.Network;
@@ -35,6 +36,7 @@ public class Server {
 	public final WalletAppKit btckit;
 	public static String LOG = "./logs";
 	public static final int UPDATE_ATTEMPTS = 5;
+	private final static boolean TEST = true;
 	
 	public Server(Network network) {
 		BriefLogFormatter.init();
@@ -72,10 +74,59 @@ public class Server {
 	}
 	
 	/*
+	 * Server evaluation of the standard contract
+	 */
+	private void executeStandard(Dispatch d, List<ListenableFuture<Transaction>> contractOutputs) {
+		try {
+			Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification = d.getNextKeys();
+			try {
+				for (FieldTypes deps : FieldTypes.getDeposits()) {
+					validateDeposits(verification, deps);
+				}
+			} catch (VerificationException e) {
+				System.out.print("[server] contract failed verification");
+				d.skipNext();
+				return;
+			}
+			
+			Map<Address, Coin> outputs = d.executeStandardContract();
+			
+			if (outputs == null) {
+				System.out.println("[server] contract returned no outputs");
+				return;
+			}
+
+			for (Map.Entry<Address, Coin> out : outputs.entrySet()) {
+				final Wallet.SendResult result = 
+						btckit.wallet().sendCoins(btckit.peerGroup(), out.getKey(), out.getValue());
+				result.broadcastComplete.addListener(new Runnable() {
+				    @Override
+				    public void run() {
+				         System.out.println("[server] contract complete: " + result.tx.getHashAsString());
+				    }
+				}, Threading.USER_THREAD);
+				
+				contractOutputs.add(result.broadcastComplete);
+			}
+		} catch (InsufficientMoneyException e1) {
+			//This should never occur
+			e1.printStackTrace();
+			return;
+		} catch (DispatchException e1) {
+			//This may occur
+			System.out.println("[server] contract failed");
+		}
+	}
+	
+	/*
 	 * Ensures that there are sufficient accessible funds to proceed with transaction
 	 * @param deposits: map of key to amount
 	 */
-	public void validateDeposits(Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification, FieldTypes which) throws VerificationException {
+	private void validateDeposits(Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification, FieldTypes which) throws VerificationException {
+		if (Server.TEST) {
+			return;
+		}
+		
 		final Coin balance = this.btckit.wallet().getBalance(BalanceType.ESTIMATED);
 		this.btckit.wallet().importKey(verification.two.get(FieldTypes.getOther(which)));
 		int tries = Server.UPDATE_ATTEMPTS;
@@ -112,45 +163,27 @@ public class Server {
 		
 		while(d.hasNext()) {
 			try {
-				Tuple<Map<FieldTypes, Coin>, Map<FieldTypes, ECKey>> verification = d.getNextKeys();
-				try {
-					for (FieldTypes deps : FieldTypes.getDeposits()) {
-						validateDeposits(verification, deps);
-					}
-				} catch (VerificationException e) {
-					System.out.print("[server] contract failed verification");
-					continue;
+				if (d.getNextType().equals(ContractType.STANDARD)) {
+					executeStandard(d, contractOutputs);
+				} else if (d.getNextType().equals(ContractType.SCRIPTED)) {
+					executeScripted(d, contractOutputs);
 				}
-				
-				Map<Address, Coin> outputs = d.executeNext();
-
-				for (Map.Entry<Address, Coin> out : outputs.entrySet()) {
-					final Wallet.SendResult result = 
-							btckit.wallet().sendCoins(btckit.peerGroup(), out.getKey(), out.getValue());
-					result.broadcastComplete.addListener(new Runnable() {
-					    @Override
-					    public void run() {
-					         System.out.println("[server] contract complete: " + result.tx.getHashAsString());
-					    }
-					}, Threading.USER_THREAD);
-					
-					contractOutputs.add(result.broadcastComplete);
-				}
-			} catch (InsufficientMoneyException e1) {
-				//This should never occur
-				e1.printStackTrace();
-				break;
-			} catch (DispatchException e1) {
-				//This may occur
-				System.out.println("[server] contract failed");
+			} catch (DispatchException e) {
+				d.skipNext();
+				System.out.println("[server] unknown contract type");
 			}
 		}
-		System.out.println("done");
+		System.out.println("\ndone");
 	}
 	
+	private void executeScripted(Dispatch d, List<ListenableFuture<Transaction>> contractOutputs) {
+		// TODO Auto-generated method stub
+		
+	}
+
 	public static void main(String[] args) {
 		Server s = new Server(Network.TEST);
-		s.serveContracts(".//contracts");
+		s.serveContracts(".//contracts//test");
 	}
 	
     // The Wallet event listener its implementations get called on wallet changes.

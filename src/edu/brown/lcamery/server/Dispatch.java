@@ -19,8 +19,6 @@ import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.ECKey;
 
 import edu.brown.lcamery.contracts.ContractType;
-import edu.brown.lcamery.contracts.ScriptedContract;
-import edu.brown.lcamery.contracts.StandardContract;
 import edu.brown.lcamery.server.security.ContractManager;
 import edu.brown.lcamery.server.support.ContractMethods;
 import edu.brown.lcamery.server.support.DispatchException;
@@ -55,9 +53,9 @@ public class Dispatch {
 			throw new DispatchException("[failure] dispatch invoked without contracts");
 		}
 		
-		if (this.theContracts.get(0).getSuperclass().equals(StandardContract.class)) {
+		if (this.theContracts.get(0).getSuperclass().getName().contains("Standard")) {
 			return ContractType.STANDARD;
-		} else if (this.theContracts.get(0).getSuperclass().equals(ScriptedContract.class)) {
+		} else if (this.theContracts.get(0).getSuperclass().getName().contains("Scripted")) {
 			return ContractType.SCRIPTED;
 		}
 		
@@ -78,7 +76,8 @@ public class Dispatch {
 						Enumeration<JarEntry> e = jar .entries();
 						if (e.hasMoreElements()) {
 							JarEntry j = (JarEntry) e.nextElement();
-							while(!j.getName().contains("contract") || j.getName().contains("type")
+							while(!j.getName().contains("contract")
+									|| j.getName().contains("type")
 									|| j.getName().contains("standard")
 									|| j.getName().contains("scripted")) {
 								j = (JarEntry) e.nextElement();
@@ -115,10 +114,11 @@ public class Dispatch {
 	}
 	
 	/*
-	 * Allows command and control to execute the next contract
+	 * Evaluates a standard contract
+	 * @param Class<? extends StandardContract>
 	 */
 	@SuppressWarnings("unchecked")
-	public Map<Address, Coin> executeNext() throws DispatchException {
+	public Map<Address, Coin> executeStandardContract() throws DispatchException {
 		if (!this.hasNext()) {
 			throw new DispatchException("[failure] dispatch invoked without contracts");
 		}
@@ -126,7 +126,6 @@ public class Dispatch {
 		Class<?> contract = this.theContracts.get(0);
 		this.theContracts.remove(0);
 		Map<ContractMethods, Method> safeMethods = verifyAndParse(contract.getMethods());
-		
 		try {
 			ContractManager sm = (ContractManager) System.getSecurityManager();
 			sm.toggle(this.pass);
@@ -147,6 +146,12 @@ public class Dispatch {
 		
 		return null;
 	}
+	
+	/*
+	 * Evaluates scripted contract
+	 * @param Class<? extends ScriptedContract>
+	 */
+	
 	
 	/*
 	 * Gets the keys for the next verification
@@ -179,10 +184,10 @@ public class Dispatch {
 				if (o instanceof ECKey) {
 					ECKey key = (ECKey) o;
 					if (f.getName().equals("key1")) {
-						bools[1] = true;
+						bools[0] = true;
 						finalfields.put(FieldTypes.KEY1, key);
 					} else if (f.getName().equals("key2")) {
-						bools[2] = true;
+						bools[1] = true;
 						finalfields.put(FieldTypes.KEY2, key);
 					} else {
 						new DispatchException("[failure] extraneous field " + f.getName());
@@ -191,10 +196,10 @@ public class Dispatch {
 				} else if (o instanceof Coin) {
 					Coin c = (Coin) o;
 					if (f.getName().equals("dep1")) {
-						bools[3] = true;
+						bools[2] = true;
 						coins.put(FieldTypes.DEP1, c);
 					} else if (f.getName().equals("dep2")) {
-						bools[4] = true;
+						bools[3] = true;
 						coins.put(FieldTypes.DEP2, c);
 					} else {
 						new DispatchException("[failure] extraneous field " + f.getName());
