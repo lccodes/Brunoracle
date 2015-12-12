@@ -5,21 +5,18 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 
-import org.bitcoinj.core.AbstractWalletEventListener;
 import org.bitcoinj.core.Address;
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.ECKey;
 import org.bitcoinj.core.InsufficientMoneyException;
 import org.bitcoinj.core.NetworkParameters;
 import org.bitcoinj.core.Transaction;
-import org.bitcoinj.core.TransactionConfidence;
 import org.bitcoinj.core.Wallet;
 import org.bitcoinj.core.Wallet.BalanceType;
 import org.bitcoinj.kits.WalletAppKit;
 import org.bitcoinj.params.MainNetParams;
 import org.bitcoinj.params.RegTestParams;
 import org.bitcoinj.params.TestNet3Params;
-import org.bitcoinj.script.Script;
 import org.bitcoinj.utils.BriefLogFormatter;
 import org.bitcoinj.utils.Threading;
 
@@ -31,6 +28,7 @@ import edu.brown.lcamery.server.support.FieldTypes;
 import edu.brown.lcamery.server.support.Network;
 import edu.brown.lcamery.server.support.Tuple;
 import edu.brown.lcamery.support.VerificationException;
+import edu.brown.lcamery.wallet.VerboseWallet;
 
 public class Server {
 	public final WalletAppKit btckit;
@@ -69,7 +67,7 @@ public class Server {
 
         // To observe wallet events (like coins received) we implement a EventListener class 
         //that extends the AbstractWalletEventListener bitcoinj then calls the different functions from the EventListener class
-        WalletListener wListener = new WalletListener();
+        VerboseWallet wListener = new VerboseWallet();
         btckit.wallet().addEventListener(wListener);
 	}
 	
@@ -173,58 +171,33 @@ public class Server {
 				System.out.println("[server] unknown contract type");
 			}
 		}
-		System.out.println("\ndone");
+		
+		//Lets go of the threadpool
+		d.destruct();
+		
+		System.out.println("\ndone: " + location);
 	}
 	
 	private void executeScripted(Dispatch d, List<ListenableFuture<Transaction>> contractOutputs) {
-		// TODO Auto-generated method stub
-		
+		try {
+			Transaction t = d.evaluateScripted();
+			btckit.peerGroup().broadcastTransaction(t);
+		} catch (DispatchException e) {
+			System.out.println("[server] contract failed " + e.getMessage());
+		}
 	}
 
 	public static void main(String[] args) {
-		Server s = new Server(Network.TEST);
+		if (args.length != 1) {
+			System.out.println("args: network");
+			return;
+		}
+		Server s;
+		if (args[0].equals("test"))
+			s = new Server(Network.TEST);
+		else
+			s = new Server(Network.PROD);
 		s.serveContracts(".//contracts//test");
 	}
-	
-    // The Wallet event listener its implementations get called on wallet changes.
-    static class WalletListener extends AbstractWalletEventListener {
-
-        @Override
-        public void onCoinsReceived(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
-            System.out.println("-----> coins resceived: " + tx.getHashAsString());
-            System.out.println("received: " + tx.getValue(wallet));
-        }
-
-        @Override
-        public void onTransactionConfidenceChanged(Wallet wallet, Transaction tx) {
-            System.out.println("-----> confidence changed: " + tx.getHashAsString());
-            TransactionConfidence confidence = tx.getConfidence();
-            System.out.println("new block depth: " + confidence.getDepthInBlocks());
-        }
-
-        @Override
-        public void onCoinsSent(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
-            System.out.println("coins sent");
-        }
-
-        @Override
-        public void onReorganize(Wallet wallet) {
-        }
-
-        @Override
-        public void onWalletChanged(Wallet wallet) {
-        	System.out.println("changed");
-        }
-
-        @Override
-        public void onKeysAdded(List<ECKey> keys) {
-            System.out.println("new key added");
-        }
-
-        @Override
-        public void onScriptsChanged(Wallet wallet, List<Script> scripts, boolean isAddingScripts) {
-            System.out.println("new script added");
-        }
-    }
 
 }

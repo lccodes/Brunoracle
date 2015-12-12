@@ -1,7 +1,12 @@
 package edu.brown.lcamery.server;
 
+import java.io.BufferedOutputStream;
 import java.io.File;
+import java.io.FileDescriptor;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -11,14 +16,22 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
 import org.bitcoinj.core.Address;
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.ECKey;
+import org.bitcoinj.core.Transaction;
 
 import edu.brown.lcamery.contracts.ContractType;
+import edu.brown.lcamery.contracts.evaluation.ScriptedEvaluator;
 import edu.brown.lcamery.server.security.ContractManager;
 import edu.brown.lcamery.server.support.ContractMethods;
 import edu.brown.lcamery.server.support.DispatchException;
@@ -30,6 +43,8 @@ public class Dispatch {
 	private ArrayList<Class<?>> theContracts;
 	private final int pass;
 	public final static String EVAL_TYPE_STANDARD = "java.util.Map<org.bitcoinj.core.Address, org.bitcoinj.core.Coin>";
+	private static final Object EVAL_TYPE_SCRIPTED = "org.bitcoinj.core.Transaction";
+	private static final ExecutorService threadpool = Executors.newFixedThreadPool(1);
 	
 	/*
 	 * Inits dispatch object 
@@ -125,9 +140,14 @@ public class Dispatch {
 		
 		Class<?> contract = this.theContracts.get(0);
 		this.theContracts.remove(0);
-		Map<ContractMethods, Method> safeMethods = verifyAndParse(contract.getMethods());
+		Map<ContractMethods, Method> safeMethods = Dispatch.verifyAndParse(contract.getMethods(), ContractType.STANDARD);
 		try {
 			ContractManager sm = (ContractManager) System.getSecurityManager();
+			try {
+				System.setOut(new PrintStream(new BufferedOutputStream(new FileOutputStream("logs/" + contract.getName() + ".log")), true));
+			} catch (FileNotFoundException e) {
+				System.err.println("[dispatch] cannot log contract " + contract.getName());
+			}
 			sm.toggle(this.pass);
 			Map<Address, Coin> btc = null;
 			if ((boolean) safeMethods.get(ContractMethods.EVALUATE).invoke(null)) {
@@ -136,6 +156,7 @@ public class Dispatch {
 				btc = (Map<Address, Coin>) safeMethods.get(ContractMethods.ONFALSE).invoke(null);
 			}
 			sm.toggle(this.pass);
+			System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out)));
 			
 			return btc;
 		} catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
@@ -160,7 +181,6 @@ public class Dispatch {
 		if (!this.hasNext()) {
 			throw new DispatchException("[failure] dispatch invoked without contracts");
 		}
-		
 		return verifyAndParseFields(this.theContracts.get(0).getFields());
 	}
 	
@@ -223,9 +243,10 @@ public class Dispatch {
 	 * Verifies the correct structure of the contract
 	 * Returns an accessible map
 	 * @param Method[] : raw contract structure
+	 * @param ContractType : what is being verified
 	 * @return Map<String, Method> : accessible and safe contract structure
 	 */
-	private static Map<ContractMethods, Method> verifyAndParse(Method[] methods) throws DispatchException {
+	private static Map<ContractMethods, Method> verifyAndParse(Method[] methods, ContractType type) throws DispatchException {
 		Map<ContractMethods, Method> safeMethods = new HashMap<ContractMethods, Method>();
 		Method eval = findMethod(methods, ContractMethods.EVALUATE.name);
 		if (eval == null || !eval.getGenericReturnType().getTypeName().equals("boolean")) {
@@ -234,18 +255,52 @@ public class Dispatch {
 		safeMethods.put(ContractMethods.EVALUATE, eval);
 		
 		Method onTrue = findMethod(methods, ContractMethods.ONTRUE.name);
-		if (onTrue == null || !onTrue.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)) {
+		if (onTrue == null || (!onTrue.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)
+				&& type.equals(ContractType.STANDARD))
+				|| (!onTrue.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_SCRIPTED)
+				&& type.equals(ContractType.SCRIPTED))) {
 			throw new DispatchException("[failure] onTrue method tampered");
 		}
 		safeMethods.put(ContractMethods.ONTRUE, onTrue);
 		
 		Method onFalse = findMethod(methods, ContractMethods.ONFALSE.name);
-		if (onFalse == null || !onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)) {
+		if (onFalse == null || !onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)
+				|| !onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_SCRIPTED)) {
 			throw new DispatchException("[failure] onFalse method tampered");
 		}
-		safeMethods.put(ContractMethods.ONFALSE, onTrue);
+		safeMethods.put(ContractMethods.ONFALSE, onFalse);
 		
 		return safeMethods;
+	}
+	
+	public Transaction evaluateScripted() throws DispatchException {
+		if (!this.hasNext()) {
+			throw new DispatchException("[failure] dispatch invoked without contracts");
+		}
+		
+		Class<?> contract = this.theContracts.get(0);
+		this.theContracts.remove(0);
+		Map<ContractMethods, Method> safeMethods = Dispatch.verifyAndParse(contract.getMethods(), ContractType.SCRIPTED);
+		try {
+			ContractManager sm = (ContractManager) System.getSecurityManager();
+			sm.toggle(this.pass);
+			ScriptedEvaluator se = new ScriptedEvaluator(safeMethods);
+			Future<Transaction> f = threadpool.submit(se);
+			Transaction t = f.get(300L, TimeUnit.SECONDS);
+			sm.toggle(this.pass);
+			
+			return t;
+		} catch (IllegalArgumentException e) {
+			new DispatchException("[failure] on evaluate: " + e.getMessage());
+		} catch (SecurityException e) {
+			new DispatchException("[failure] security failure");
+		} catch (InterruptedException | TimeoutException e) {
+			new DispatchException("[failure] contract killed due to timeout");
+		} catch (ExecutionException e) {
+			new DispatchException("[failure] contract errored out " + e.getMessage());
+		} 
+		
+		return null;
 	}
 	
 	/*
@@ -269,6 +324,13 @@ public class Dispatch {
 		}
 		
 		return null;
+	}
+	
+	/*
+	 * Frees the threadpool
+	 */
+	public void destruct() {
+		threadpool.shutdown();
 	}
 
 }
