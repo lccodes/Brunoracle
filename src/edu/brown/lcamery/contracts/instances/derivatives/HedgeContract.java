@@ -1,4 +1,4 @@
-package edu.brown.lcamery.contracts.instances;
+package edu.brown.lcamery.contracts.instances.derivatives;
 
 import org.bitcoinj.core.Coin;
 import org.bitcoinj.core.Transaction;

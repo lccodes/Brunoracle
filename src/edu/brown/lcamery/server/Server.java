@@ -23,6 +23,7 @@ import org.bitcoinj.utils.Threading;
 import com.google.common.util.concurrent.ListenableFuture;
 
 import edu.brown.lcamery.contracts.ContractType;
+import edu.brown.lcamery.server.security.SecurityType;
 import edu.brown.lcamery.server.support.DispatchException;
 import edu.brown.lcamery.server.support.FieldTypes;
 import edu.brown.lcamery.server.support.Network;
@@ -35,6 +36,7 @@ public class Server {
 	public static String LOG = "./logs";
 	public static final int UPDATE_ATTEMPTS = 5;
 	private final static boolean TEST = true;
+	private static final Coin DUST = Coin.valueOf(750), CHARGE = Coin.valueOf(0);
 	
 	public Server(Network network) {
 		BriefLogFormatter.init();
@@ -90,11 +92,15 @@ public class Server {
 			Map<Address, Coin> outputs = d.executeStandardContract();
 			
 			if (outputs == null) {
-				System.out.println("[server] contract returned no outputs");
+				System.out.println("[server] contract killed by security");
 				return;
 			}
 
 			for (Map.Entry<Address, Coin> out : outputs.entrySet()) {
+				if (out.getValue().isLessThan(DUST)) {
+					System.out.println("[server] skipped due to dusty send");
+					continue;
+				}
 				final Wallet.SendResult result = 
 						btckit.wallet().sendCoins(btckit.peerGroup(), out.getKey(), out.getValue());
 				result.broadcastComplete.addListener(new Runnable() {
@@ -112,7 +118,7 @@ public class Server {
 			return;
 		} catch (DispatchException e1) {
 			//This may occur
-			System.out.println("[server] contract failed");
+			System.out.println("[server] contract failed" + e1.getMessage());
 		}
 	}
 	
@@ -131,7 +137,11 @@ public class Server {
 		boolean enoughOne = false;
 		while (tries-- > 0) {
 			Coin newBalance = this.btckit.wallet().getBalance(BalanceType.ESTIMATED);
-			if (newBalance.subtract(balance).isGreaterThan(verification.one.get(which))) {
+			//Include minimum transaction fee
+			if (newBalance.subtract(balance)
+					.subtract(Coin.valueOf(1000))
+					.subtract(CHARGE)
+					.isGreaterThan(verification.one.get(which))) {
 				enoughOne = true;
 				break;
 			}
@@ -149,11 +159,16 @@ public class Server {
 	/*
 	 * Launches the server
 	 */
-	public void serveContracts(String location) {
-		List<ListenableFuture<Transaction>> contractOutputs = new LinkedList<ListenableFuture<Transaction>>();
+	public void serveContracts(String location, String security) {
+		List<ListenableFuture<Transaction>> contractOutputs = 
+				new LinkedList<ListenableFuture<Transaction>>();
+		SecurityType type = SecurityType.FULL;
+		if (security.equals("internet")) {
+			type = SecurityType.INTERNET;
+		}
 		Dispatch d;
 		try {
-			d = new Dispatch(location);
+			d = new Dispatch(location, type);
 		} catch (DispatchException e2) {
 			System.out.println("[server] failed to load " + location);
 			return;
@@ -185,19 +200,6 @@ public class Server {
 		} catch (DispatchException e) {
 			System.out.println("[server] contract failed " + e.getMessage());
 		}
-	}
-
-	public static void main(String[] args) {
-		if (args.length != 1) {
-			System.out.println("args: network");
-			return;
-		}
-		Server s;
-		if (args[0].equals("test"))
-			s = new Server(Network.TEST);
-		else
-			s = new Server(Network.PROD);
-		s.serveContracts(".//contracts//test");
 	}
 
 }

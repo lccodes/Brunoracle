@@ -33,6 +33,9 @@ import org.bitcoinj.core.Transaction;
 import edu.brown.lcamery.contracts.ContractType;
 import edu.brown.lcamery.contracts.evaluation.ScriptedEvaluator;
 import edu.brown.lcamery.server.security.ContractManager;
+import edu.brown.lcamery.server.security.FullManager;
+import edu.brown.lcamery.server.security.InternetManager;
+import edu.brown.lcamery.server.security.SecurityType;
 import edu.brown.lcamery.server.support.ContractMethods;
 import edu.brown.lcamery.server.support.DispatchException;
 import edu.brown.lcamery.server.support.FieldTypes;
@@ -45,17 +48,21 @@ public class Dispatch {
 	public final static String EVAL_TYPE_STANDARD = "java.util.Map<org.bitcoinj.core.Address, org.bitcoinj.core.Coin>";
 	private static final Object EVAL_TYPE_SCRIPTED = "org.bitcoinj.core.Transaction";
 	private static final ExecutorService threadpool = Executors.newFixedThreadPool(1);
+	private int iter = 0;
 	
 	/*
 	 * Inits dispatch object 
 	 */
-	public Dispatch(String location) throws DispatchException {
+	public Dispatch(String location, SecurityType sec) throws DispatchException {
 		this.LOCATION = String.copyValueOf(location.toCharArray());
 		this.theContracts = new ArrayList<Class<?>>();
 		this.loadContracts();
 		this.pass = (int) (Math.random() * 1000000000);
 		
-		System.setSecurityManager(new ContractManager(this.pass));
+		if (sec.equals(SecurityType.FULL))
+			System.setSecurityManager(new FullManager(this.pass));
+		if (sec.equals(SecurityType.INTERNET))
+			System.setSecurityManager(new InternetManager(this.pass));
 		ContractManager sm = (ContractManager) System.getSecurityManager();
 		sm.toggle(this.pass);
 	}
@@ -92,9 +99,10 @@ public class Dispatch {
 						if (e.hasMoreElements()) {
 							JarEntry j = (JarEntry) e.nextElement();
 							while(!j.getName().contains("contract")
-									|| j.getName().contains("type")
-									|| j.getName().contains("standard")
-									|| j.getName().contains("scripted")) {
+									|| j.getName().contains("Type")
+									|| j.getName().contains("Standard")
+									|| j.getName().contains("Scripted")
+									|| j.getName().contains("$")) {
 								j = (JarEntry) e.nextElement();
 							}
 							String name = j.getName();
@@ -141,10 +149,11 @@ public class Dispatch {
 		Class<?> contract = this.theContracts.get(0);
 		this.theContracts.remove(0);
 		Map<ContractMethods, Method> safeMethods = Dispatch.verifyAndParse(contract.getMethods(), ContractType.STANDARD);
+		ContractManager sm  = (ContractManager) System.getSecurityManager();;
 		try {
-			ContractManager sm = (ContractManager) System.getSecurityManager();
 			try {
-				System.setOut(new PrintStream(new BufferedOutputStream(new FileOutputStream("logs/" + contract.getName() + ".log")), true));
+				System.setOut(new PrintStream(new BufferedOutputStream(
+						new FileOutputStream("./logs/contracts/" + contract.getName() + iter++ + ".log")), true));
 			} catch (FileNotFoundException e) {
 				System.err.println("[dispatch] cannot log contract " + contract.getName());
 			}
@@ -155,6 +164,7 @@ public class Dispatch {
 			} else {
 				btc = (Map<Address, Coin>) safeMethods.get(ContractMethods.ONFALSE).invoke(null);
 			}
+			
 			sm.toggle(this.pass);
 			System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out)));
 			
@@ -165,6 +175,9 @@ public class Dispatch {
 			new DispatchException("[failure] security failure");
 		}
 		
+		//Backup
+		sm.mandate(this.pass, false);
+		System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out)));
 		return null;
 	}
 	
@@ -264,8 +277,10 @@ public class Dispatch {
 		safeMethods.put(ContractMethods.ONTRUE, onTrue);
 		
 		Method onFalse = findMethod(methods, ContractMethods.ONFALSE.name);
-		if (onFalse == null || !onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)
-				|| !onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_SCRIPTED)) {
+		if (onFalse == null || (!onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_STANDARD)
+				&& type.equals(ContractType.STANDARD))
+				|| (!onFalse.getGenericReturnType().getTypeName().equals(Dispatch.EVAL_TYPE_SCRIPTED)
+				&& type.equals(ContractType.SCRIPTED))) {
 			throw new DispatchException("[failure] onFalse method tampered");
 		}
 		safeMethods.put(ContractMethods.ONFALSE, onFalse);
@@ -283,11 +298,18 @@ public class Dispatch {
 		Map<ContractMethods, Method> safeMethods = Dispatch.verifyAndParse(contract.getMethods(), ContractType.SCRIPTED);
 		try {
 			ContractManager sm = (ContractManager) System.getSecurityManager();
+			try {
+				System.setOut(new PrintStream(new BufferedOutputStream(
+						new FileOutputStream("./logs/contracts/" + contract.getName() + iter++ + ".log")), true));
+			} catch (FileNotFoundException e) {
+				System.err.println("[dispatch] cannot log contract " + contract.getName());
+			}
 			sm.toggle(this.pass);
 			ScriptedEvaluator se = new ScriptedEvaluator(safeMethods);
 			Future<Transaction> f = threadpool.submit(se);
 			Transaction t = f.get(300L, TimeUnit.SECONDS);
 			sm.toggle(this.pass);
+			System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out)));
 			
 			return t;
 		} catch (IllegalArgumentException e) {

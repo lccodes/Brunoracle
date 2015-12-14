@@ -16,19 +16,19 @@ public class VerboseWallet extends AbstractWalletEventListener {
     @Override
     public void onCoinsReceived(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
         System.out.println("-----> coins resceived: " + tx.getHashAsString());
-        System.out.println("received: " + tx.getValue(wallet));
+        System.out.println("-----> received: " + tx.getValue(wallet).value*-1);
     }
 
     @Override
     public void onTransactionConfidenceChanged(Wallet wallet, Transaction tx) {
         System.out.println("-----> confidence changed: " + tx.getHashAsString());
         TransactionConfidence confidence = tx.getConfidence();
-        System.out.println("new block depth: " + confidence.getDepthInBlocks());
+        System.out.println("-----> new block depth: " + confidence.getDepthInBlocks());
     }
 
     @Override
     public void onCoinsSent(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
-        System.out.println("coins sent");
+        System.out.println("-----> coins sent" + newBalance.subtract(prevBalance).subtract(Coin.valueOf(1000)) + " + 1000 fee");
     }
 
     @Override
@@ -37,16 +37,16 @@ public class VerboseWallet extends AbstractWalletEventListener {
 
     @Override
     public void onWalletChanged(Wallet wallet) {
-    	System.out.println("changed");
+    	System.out.println("-----> changed");
     }
 
     @Override
     public void onKeysAdded(List<ECKey> keys) {
-        System.out.println("new key added");
+        System.out.println("-----> new key added");
     }
 
     @Override
     public void onScriptsChanged(Wallet wallet, List<Script> scripts, boolean isAddingScripts) {
-        System.out.println("new script added");
+        System.out.println("-----> new script added");
     }
 }
