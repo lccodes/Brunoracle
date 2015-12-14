@@ -16,7 +16,7 @@ public class VerboseWallet extends AbstractWalletEventListener {
     @Override
     public void onCoinsReceived(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
         System.out.println("-----> coins resceived: " + tx.getHashAsString());
-        System.out.println("-----> received: " + tx.getValue(wallet).value*-1);
+        System.out.println("-----> received: " + Math.abs(tx.getValue(wallet).value));
     }
 
     @Override
@@ -28,7 +28,7 @@ public class VerboseWallet extends AbstractWalletEventListener {
 
     @Override
     public void onCoinsSent(Wallet wallet, Transaction tx, Coin prevBalance, Coin newBalance) {
-        System.out.println("-----> coins sent" + newBalance.subtract(prevBalance).subtract(Coin.valueOf(1000)) + " + 1000 fee");
+        System.out.println("-----> coins sent" + newBalance.subtract(prevBalance).add(Coin.valueOf(1000)) + " + 1000 fee");
     }
 
     @Override
