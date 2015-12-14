@@ -14,7 +14,6 @@ public class Command {
 	}
 	
 	public void run() {
-		int demo = 0;
 		Scanner scan = new Scanner(System.in);
 		while(true) {
 			String[] command = scan.nextLine().split(" ");
@@ -27,12 +26,7 @@ public class Command {
 			} else if (command[0].equals("exit")) {
 				break;
 			} else if (command[0].equals("balance")) {
-				if (demo == 1) {
-					System.out.println(server.btckit.wallet().getBalance(BalanceType.ESTIMATED).value+3200);
-				} else {
-					System.out.println(server.btckit.wallet().getBalance(BalanceType.ESTIMATED));
-				}
-				demo = 1;
+				System.out.println(server.btckit.wallet().getBalance(BalanceType.ESTIMATED).value);
 			} else if (command[0].equals("address")) {
 				System.out.println(server.btckit.wallet().currentReceiveAddress());
 			}

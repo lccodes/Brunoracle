@@ -35,7 +35,7 @@ public class Server {
 	public final WalletAppKit btckit;
 	public static String LOG = "./logs";
 	public static final int UPDATE_ATTEMPTS = 5;
-	private final static boolean TEST = true;
+	private final static boolean TEST = false;
 	private static final Coin DUST = Coin.valueOf(750), CHARGE = Coin.valueOf(0);
 	
 	public Server(Network network) {
