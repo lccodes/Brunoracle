@@ -1,2 +1,2 @@
 # Brunoracle
-Smart contract implementation
+The Brunoracle is an untrusted, single oracle model for smart contract evaluation. Its defining characteristics are the intention that smart contract code and logic are obfuscated to the contractors’ best abilities and that the oracle is protected against malicious contracts with a custom sandbox that is less expensive than a virtual machine, provides fine grained control, and maintains the same level of security as a virtual machine. 
